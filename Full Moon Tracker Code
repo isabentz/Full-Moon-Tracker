@@ -1,0 +1,112 @@
+/**
+ * Sends email alerts for upcoming full moons from the Calendarific API, 1 day before.
+ */
+function sendFullMoonReminders() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Sheet1"); // Replace "Sheet1" with your sheet name if different
+  const data = sheet.getDataRange().getValues();
+  const today = new Date();
+  const emailAddress = "isabella.m.bentz@gmail.com"; // Updated email address
+
+  for (let i = 1; i < data.length; i++) { // Start from row 2 (index 1) to skip headers
+    const row = data[i];
+    const fullMoonName = row[0];
+    const frequency = row[4];  // Assuming frequency is in column E
+    const lastRemindedDate = row[5] ? new Date(row[5]) : null; // Assuming last reminded date is in column F
+
+    // Skip if no frequency is specified or frequency is invalid
+    if (!frequency || !["Yearly", "Monthly", "Weekly"].includes(frequency)) continue;
+
+    // Get the full moon date from the API for the current year
+    const fullMoonDate = getFullMoonDateFromAPI(fullMoonName, today.getFullYear());
+
+    if (!fullMoonDate) {
+      Logger.log(`Could not find date for ${fullMoonName} in ${today.getFullYear()}.`);
+      continue; // Skip to the next full moon
+    }
+
+    const timeDiff = (fullMoonDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24);
+
+    if (timeDiff > 0) { // Check if the full moon is in the future
+      let sendReminder = false;
+      const reminderDaysInAdvance = 1; // Send 1 day before
+
+      if (timeDiff <= reminderDaysInAdvance && timeDiff > 0) { // Check if it's 1 day before (and not already past)
+        if (!lastRemindedDate || fullMoonDate.getTime() > lastRemindedDate.getTime()) { // Send only if not already reminded or if full moon date is later
+          sendReminder = true;
+        }
+      }
+
+      if (sendReminder) {
+        const subject = `${fullMoonName} Reminder`;
+        const body = `This is a reminder that the ${fullMoonName} is tomorrow, on ${fullMoonDate.toLocaleDateString()}.`; // Updated body
+        MailApp.sendEmail(emailAddress, subject, body);
+        Logger.log(`Email sent to ${emailAddress} for ${fullMoonName} on ${fullMoonDate}`);
+
+        // Update the last reminded date in the spreadsheet
+        sheet.getRange(i + 1, 6).setValue(fullMoonDate); // Update Column F (adjust if needed)
+      }
+    }
+  }
+}
+
+
+
+/**
+ * Retrieves the date of a specific full moon from the Calendarific API.
+ * @param {string} fullMoonName The name of the full moon (e.g., "Wolf Moon").
+ * @param {number} year The year.
+ * @returns {Date|null} The full moon date, or null if not found.
+ */
+function getFullMoonDateFromAPI(fullMoonName, year) {
+  const apiKey = "4tcExGWoMGqKiPrh4uXLCRnTIQ0DDc5w"; // Your Calendarific API key is inserted here
+  const apiUrl = `https://calendarific.com/api/v2/events?api_key=${apiKey}&type=full%20moon&year=${year}`; // Example URL
+
+  try {
+    const response = UrlFetchApp.fetch(apiUrl);
+    const data = JSON.parse(response.getContentText());
+
+    if (data.meta.code !== 200) { // Check for API errors
+      Logger.log(`Calendarific API error: ${data.meta.message}`);
+      return null;
+    }
+
+    // Iterate through results and find the event that matches the full moon name.
+    for (const event of data.result) {
+      if (event.name.toLowerCase().includes(fullMoonName.toLowerCase())) {
+        const dateString = event.date.iso;
+        return new Date(dateString);
+      }
+    }
+
+    return null; // Full moon not found for that year
+
+  } catch (error) {
+    Logger.log(`Error fetching from Calendarific API: ${error}`);
+    return null;
+  }
+}
+
+
+
+/**
+ * Sets up a time-driven trigger to run the sendFullMoonReminders function daily.
+ */
+function createTrigger() {
+  // Delete any existing triggers for the function to prevent multiple executions.
+  const triggers = ScriptApp.getProjectTriggers();
+  for (const trigger of triggers) {
+    if (trigger.getHandlerFunction() === "sendFullMoonReminders") {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  }
+
+  // Create a new time-driven trigger to run daily at a specific time (e.g., 6 AM).
+  ScriptApp.newTrigger("sendFullMoonReminders")
+    .timeBased()
+    .atHour(6) // Set the desired hour (0-23).
+    .everyDays(1)
+    .create();
+
+  Logger.log("Trigger created.");
+}
